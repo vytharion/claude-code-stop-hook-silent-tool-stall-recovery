@@ -1,0 +1,13 @@
+README.md
+pyproject.toml
+stall_watch/__init__.py
+stall_watch/hook.py
+stall_watch/simulate.py
+stall_watch/transcript.py
+stall_watch.egg-info/PKG-INFO
+stall_watch.egg-info/SOURCES.txt
+stall_watch.egg-info/dependency_links.txt
+stall_watch.egg-info/requires.txt
+stall_watch.egg-info/top_level.txt
+tests/test_hook.py
+tests/test_transcript.py

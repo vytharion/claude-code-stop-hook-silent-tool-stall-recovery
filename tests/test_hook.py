@@ -5,6 +5,8 @@ from pathlib import Path
 from stall_watch.hook import parse_stop_hook_input, run
 from stall_watch.simulate import (
     write_healthy_transcript,
+    write_hung_mcp_transcript,
+    write_missing_followup_transcript,
     write_stalled_transcript,
 )
 
@@ -81,3 +83,29 @@ def test_run_treats_missing_transcript_as_no_stall(tmp_path: Path) -> None:
 
     assert exit_code == 0
     assert stderr.getvalue() == ""
+
+
+def test_run_labels_hung_mcp_call(tmp_path: Path) -> None:
+    transcript = tmp_path / "mcp.jsonl"
+    write_hung_mcp_transcript(transcript)
+    stdin = io.StringIO(_hook_stdin_payload(transcript))
+    stderr = io.StringIO()
+
+    exit_code = run(stdin, stderr)
+
+    assert exit_code == 2
+    message = stderr.getvalue()
+    assert "hung mcp call" in message
+
+
+def test_run_labels_missing_followup(tmp_path: Path) -> None:
+    transcript = tmp_path / "followup.jsonl"
+    write_missing_followup_transcript(transcript)
+    stdin = io.StringIO(_hook_stdin_payload(transcript))
+    stderr = io.StringIO()
+
+    exit_code = run(stdin, stderr)
+
+    assert exit_code == 2
+    message = stderr.getvalue()
+    assert "missing follow-up" in message

@@ -94,3 +94,40 @@ def write_mixed_transcript(path: Path) -> tuple[str, str]:
     ]
     _write_jsonl(path, events)
     return completed_id, stalled_id
+
+
+def write_empty_result_transcript(path: Path, tool_name: str = "Bash") -> str:
+    tool_id = _fresh_tool_id()
+    events = [
+        _text_event("user", "Print the release notes."),
+        _tool_use_event(tool_name, {"command": "cat NOTES.md"}, tool_id),
+        _tool_result_event(tool_id, ""),
+        _text_event("assistant", "Odd — nothing came back."),
+    ]
+    _write_jsonl(path, events)
+    return tool_id
+
+
+def write_hung_mcp_transcript(
+    path: Path, tool_name: str = "mcp__example__slow_call"
+) -> str:
+    tool_id = _fresh_tool_id()
+    events = [
+        _text_event("user", "Fetch the remote report."),
+        _text_event("assistant", "Calling the MCP server now."),
+        _tool_use_event(tool_name, {"report_id": "42"}, tool_id),
+    ]
+    _write_jsonl(path, events)
+    return tool_id
+
+
+def write_missing_followup_transcript(path: Path, tool_name: str = "Read") -> str:
+    tool_id = _fresh_tool_id()
+    events = [
+        _text_event("user", "Open the config file and tell me the port."),
+        _text_event("assistant", "Reading the config now."),
+        _tool_use_event(tool_name, {"file_path": "/tmp/config.yaml"}, tool_id),
+        _tool_result_event(tool_id, "port: 8080\n"),
+    ]
+    _write_jsonl(path, events)
+    return tool_id

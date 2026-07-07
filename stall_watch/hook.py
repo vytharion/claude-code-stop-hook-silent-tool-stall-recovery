@@ -2,11 +2,26 @@ from __future__ import annotations
 
 import json
 import sys
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
-from stall_watch.transcript import PendingToolCall, find_pending_tool_calls
+from stall_watch.transcript import (
+    KIND_EMPTY_TOOL_RESULT,
+    KIND_HUNG_MCP_CALL,
+    KIND_MISSING_FOLLOWUP,
+    KIND_PENDING_TOOL_USE,
+    StallSignature,
+    detect_stalls,
+)
+
+KIND_LABEL = {
+    KIND_PENDING_TOOL_USE: "pending tool_use",
+    KIND_EMPTY_TOOL_RESULT: "empty tool_result",
+    KIND_HUNG_MCP_CALL: "hung mcp call",
+    KIND_MISSING_FOLLOWUP: "missing follow-up",
+}
 
 
 @dataclass(frozen=True)
@@ -29,25 +44,32 @@ def parse_stop_hook_input(raw: str) -> StopHookInput:
     )
 
 
-def _scan_transcript(hook_input: StopHookInput) -> list[PendingToolCall]:
+def _scan_transcript(hook_input: StopHookInput) -> list[StallSignature]:
     if not hook_input.transcript_path.exists():
         return []
-    return find_pending_tool_calls(hook_input.transcript_path)
+    return detect_stalls(hook_input.transcript_path)
+
+
+def _label(kind: str) -> str:
+    return KIND_LABEL.get(kind, kind.replace("_", " "))
 
 
 def _report_stall(
     hook_input: StopHookInput,
-    pending: list[PendingToolCall],
+    signatures: list[StallSignature],
     stderr: IO[str],
 ) -> None:
-    first = pending[0]
-    stderr.write(
-        f"stall_watch: {len(pending)} pending tool_use "
-        f"in {hook_input.transcript_path}\n"
-    )
+    counts = Counter(sig.kind for sig in signatures)
+    for kind, count in counts.items():
+        stderr.write(
+            f"stall_watch: {count} {_label(kind)} "
+            f"in {hook_input.transcript_path}\n"
+        )
+    first = signatures[0]
     stderr.write(
         f"stall_watch: first stall = {first.tool_name} "
-        f"(id={first.tool_use_id}) at line {first.line_number}\n"
+        f"(id={first.tool_use_id}) at line {first.line_number} "
+        f"[{_label(first.kind)}]\n"
     )
 
 
@@ -57,10 +79,10 @@ def run(stdin: IO[str], stderr: IO[str]) -> int:
     # prior Stop-hook block; returning non-zero again would loop forever.
     if hook_input.stop_hook_active:
         return 0
-    pending = _scan_transcript(hook_input)
-    if not pending:
+    signatures = _scan_transcript(hook_input)
+    if not signatures:
         return 0
-    _report_stall(hook_input, pending, stderr)
+    _report_stall(hook_input, signatures, stderr)
     return 2
 
 

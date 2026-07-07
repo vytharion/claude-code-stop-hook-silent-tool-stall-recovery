@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
+from stall_watch.recovery import build_recovery_prompt
 from stall_watch.transcript import (
     KIND_EMPTY_TOOL_RESULT,
     KIND_HUNG_MCP_CALL,
@@ -71,6 +72,7 @@ def _report_stall(
         f"(id={first.tool_use_id}) at line {first.line_number} "
         f"[{_label(first.kind)}]\n"
     )
+    stderr.write(build_recovery_prompt(signatures))
 
 
 def run(stdin: IO[str], stderr: IO[str]) -> int:

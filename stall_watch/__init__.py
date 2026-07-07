@@ -1,3 +1,18 @@
+from stall_watch.guardrails import (
+    DEFAULT_COOLDOWN_SECONDS,
+    DEFAULT_KILL_SWITCH_ENV,
+    DEFAULT_MAX_RETRIES,
+    GuardrailConfig,
+    GuardrailDecision,
+    SessionState,
+    is_in_cooldown,
+    is_kill_switch_active,
+    load_state,
+    partition_signatures,
+    record_recovery,
+    save_state,
+    state_path,
+)
 from stall_watch.hook import StopHookInput, parse_stop_hook_input, run
 from stall_watch.recovery import (
     RECOVERY_FOOTER,
@@ -18,6 +33,11 @@ from stall_watch.transcript import (
 )
 
 __all__ = [
+    "DEFAULT_COOLDOWN_SECONDS",
+    "DEFAULT_KILL_SWITCH_ENV",
+    "DEFAULT_MAX_RETRIES",
+    "GuardrailConfig",
+    "GuardrailDecision",
     "KIND_EMPTY_TOOL_RESULT",
     "KIND_HUNG_MCP_CALL",
     "KIND_MISSING_FOLLOWUP",
@@ -25,13 +45,21 @@ __all__ = [
     "PendingToolCall",
     "RECOVERY_FOOTER",
     "RECOVERY_HEADER",
+    "SessionState",
     "StallSignature",
     "StopHookInput",
     "build_recovery_prompt",
     "detect_stalls",
     "find_pending_tool_calls",
     "has_silent_stall",
+    "is_in_cooldown",
+    "is_kill_switch_active",
+    "load_state",
     "nudge_for_signature",
     "parse_stop_hook_input",
+    "partition_signatures",
+    "record_recovery",
     "run",
+    "save_state",
+    "state_path",
 ]

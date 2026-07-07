@@ -2,11 +2,22 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO
+from typing import IO, Mapping
 
+from stall_watch.guardrails import (
+    GuardrailConfig,
+    SessionState,
+    is_in_cooldown,
+    is_kill_switch_active,
+    load_state,
+    partition_signatures,
+    record_recovery,
+    save_state,
+)
 from stall_watch.recovery import build_recovery_prompt
 from stall_watch.transcript import (
     KIND_EMPTY_TOOL_RESULT,
@@ -75,7 +86,73 @@ def _report_stall(
     stderr.write(build_recovery_prompt(signatures))
 
 
-def run(stdin: IO[str], stderr: IO[str]) -> int:
+def _report_exhaustion(
+    capped: list[StallSignature],
+    stderr: IO[str],
+    config: GuardrailConfig,
+) -> None:
+    stderr.write(
+        f"stall_watch: retry cap ({config.max_retries}) reached for "
+        f"{len(capped)} stall(s); giving up so the agent can stop\n"
+    )
+    for signature in capped:
+        stderr.write(
+            f"stall_watch: exhausted {signature.tool_name} "
+            f"(id={signature.tool_use_id}) at line {signature.line_number} "
+            f"[{_label(signature.kind)}]\n"
+        )
+
+
+def _report_kill_switch(stderr: IO[str], config: GuardrailConfig) -> None:
+    stderr.write(
+        "stall_watch: kill switch active "
+        f"(env {config.kill_switch_env} or file {config.kill_switch_file}); "
+        "skipping recovery\n"
+    )
+
+
+def _report_cooldown(
+    stderr: IO[str], state: SessionState, config: GuardrailConfig, now: float
+) -> None:
+    remaining = config.cooldown_seconds - (now - state.last_recovery_at)
+    stderr.write(
+        f"stall_watch: cooldown active ({remaining:.1f}s left of "
+        f"{config.cooldown_seconds:.1f}s); skipping recovery\n"
+    )
+
+
+def _dispatch(
+    hook_input: StopHookInput,
+    signatures: list[StallSignature],
+    config: GuardrailConfig,
+    environ: Mapping[str, str] | None,
+    now: float,
+    stderr: IO[str],
+) -> int:
+    if is_kill_switch_active(config, environ):
+        _report_kill_switch(stderr, config)
+        return 0
+    state = load_state(config, hook_input.session_id)
+    if is_in_cooldown(state, config, now):
+        _report_cooldown(stderr, state, config, now)
+        return 0
+    decision = partition_signatures(signatures, state, config)
+    if not decision.allowed:
+        _report_exhaustion(decision.capped, stderr, config)
+        return 0
+    _report_stall(hook_input, decision.allowed, stderr)
+    new_state = record_recovery(state, decision.allowed, now)
+    save_state(config, hook_input.session_id, new_state)
+    return 2
+
+
+def run(
+    stdin: IO[str],
+    stderr: IO[str],
+    config: GuardrailConfig | None = None,
+    environ: Mapping[str, str] | None = None,
+    now: float | None = None,
+) -> int:
     hook_input = parse_stop_hook_input(stdin.read())
     # stop_hook_active means Claude Code is already re-entering after a
     # prior Stop-hook block; returning non-zero again would loop forever.
@@ -84,8 +161,18 @@ def run(stdin: IO[str], stderr: IO[str]) -> int:
     signatures = _scan_transcript(hook_input)
     if not signatures:
         return 0
-    _report_stall(hook_input, signatures, stderr)
-    return 2
+    effective_config = config or GuardrailConfig.from_env(
+        hook_input.cwd, environ=environ
+    )
+    effective_now = now if now is not None else time.time()
+    return _dispatch(
+        hook_input=hook_input,
+        signatures=signatures,
+        config=effective_config,
+        environ=environ,
+        now=effective_now,
+        stderr=stderr,
+    )
 
 
 def main() -> int:

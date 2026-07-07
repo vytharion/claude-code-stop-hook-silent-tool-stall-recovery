@@ -8,6 +8,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Mapping
 
+from stall_watch.event_log import (
+    EVENT_COOLDOWN_SKIPPED,
+    EVENT_HEALTHY_STOP,
+    EVENT_KILL_SWITCH_ACTIVE,
+    EVENT_RECOVERY_DISPATCHED,
+    EVENT_RETRY_CAP_HIT,
+    EVENT_STALL_DETECTED,
+    log_event,
+    resolve_log_path,
+)
 from stall_watch.guardrails import (
     GuardrailConfig,
     SessionState,
@@ -121,6 +131,18 @@ def _report_cooldown(
     )
 
 
+def _signature_summary(signatures: list[StallSignature]) -> list[dict]:
+    return [
+        {
+            "kind": sig.kind,
+            "tool_name": sig.tool_name,
+            "tool_use_id": sig.tool_use_id,
+            "line_number": sig.line_number,
+        }
+        for sig in signatures
+    ]
+
+
 def _dispatch(
     hook_input: StopHookInput,
     signatures: list[StallSignature],
@@ -128,21 +150,62 @@ def _dispatch(
     environ: Mapping[str, str] | None,
     now: float,
     stderr: IO[str],
+    log_path: "Path | None",
 ) -> int:
+    session_id = hook_input.session_id
+    log_event(
+        log_path,
+        session_id,
+        EVENT_STALL_DETECTED,
+        now,
+        signatures=_signature_summary(signatures),
+        transcript=str(hook_input.transcript_path),
+    )
     if is_kill_switch_active(config, environ):
         _report_kill_switch(stderr, config)
+        log_event(
+            log_path,
+            session_id,
+            EVENT_KILL_SWITCH_ACTIVE,
+            now,
+            env=config.kill_switch_env,
+        )
         return 0
     state = load_state(config, hook_input.session_id)
     if is_in_cooldown(state, config, now):
         _report_cooldown(stderr, state, config, now)
+        log_event(
+            log_path,
+            session_id,
+            EVENT_COOLDOWN_SKIPPED,
+            now,
+            cooldown_seconds=config.cooldown_seconds,
+            last_recovery_at=state.last_recovery_at,
+        )
         return 0
     decision = partition_signatures(signatures, state, config)
     if not decision.allowed:
         _report_exhaustion(decision.capped, stderr, config)
+        log_event(
+            log_path,
+            session_id,
+            EVENT_RETRY_CAP_HIT,
+            now,
+            max_retries=config.max_retries,
+            capped=_signature_summary(decision.capped),
+        )
         return 0
     _report_stall(hook_input, decision.allowed, stderr)
     new_state = record_recovery(state, decision.allowed, now)
     save_state(config, hook_input.session_id, new_state)
+    log_event(
+        log_path,
+        session_id,
+        EVENT_RECOVERY_DISPATCHED,
+        now,
+        allowed=_signature_summary(decision.allowed),
+        retries_after=dict(new_state.retries),
+    )
     return 2
 
 
@@ -152,6 +215,7 @@ def run(
     config: GuardrailConfig | None = None,
     environ: Mapping[str, str] | None = None,
     now: float | None = None,
+    log_path: "Path | None" = None,
 ) -> int:
     hook_input = parse_stop_hook_input(stdin.read())
     # stop_hook_active means Claude Code is already re-entering after a
@@ -159,12 +223,20 @@ def run(
     if hook_input.stop_hook_active:
         return 0
     signatures = _scan_transcript(hook_input)
+    effective_now = now if now is not None else time.time()
+    effective_log_path = resolve_log_path(environ, explicit=log_path)
     if not signatures:
+        log_event(
+            effective_log_path,
+            hook_input.session_id,
+            EVENT_HEALTHY_STOP,
+            effective_now,
+            transcript=str(hook_input.transcript_path),
+        )
         return 0
     effective_config = config or GuardrailConfig.from_env(
         hook_input.cwd, environ=environ
     )
-    effective_now = now if now is not None else time.time()
     return _dispatch(
         hook_input=hook_input,
         signatures=signatures,
@@ -172,6 +244,7 @@ def run(
         environ=environ,
         now=effective_now,
         stderr=stderr,
+        log_path=effective_log_path,
     )
 
 

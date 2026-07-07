@@ -121,6 +121,21 @@ def write_hung_mcp_transcript(
     return tool_id
 
 
+def append_recovery(
+    path: Path,
+    tool_id: str,
+    output: str = "port: 8080\n",
+    followup: str = "The config uses port 8080.",
+) -> None:
+    events = [
+        _tool_result_event(tool_id, output),
+        _text_event("assistant", followup),
+    ]
+    with path.open("a", encoding="utf-8") as handle:
+        for event in events:
+            handle.write(json.dumps(event) + "\n")
+
+
 def write_missing_followup_transcript(path: Path, tool_name: str = "Read") -> str:
     tool_id = _fresh_tool_id()
     events = [
